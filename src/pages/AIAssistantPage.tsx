@@ -1,11 +1,20 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Chip, Fade, Stack, Typography } from '@mui/material'
 import SmartToyIcon from '@mui/icons-material/SmartToy'
-import BookCard from '../components/BookCard'
-import BookGrid from '../components/BookGrid'
-import { books, currentUserId, diary, getUser } from '../data/mock'
-import type { Book } from '../types'
+import { BookCard, BookGrid } from '@/entities/book'
+import type { Book } from '@/entities/book'
+import { MessageBubble } from '@/entities/chat'
+import {
+  loadRecommendationContext,
+  recommendByDiary,
+  recommendByGenres,
+  recommendByQuery,
+} from '@/features/recommendations'
+import type { RecommendationContext } from '@/features/recommendations'
+import { routes } from '@/shared/config/routes'
+import { useAsync } from '@/shared/lib'
+import { AnimatedList, AsyncView, MessageInput } from '@/shared/ui'
 
 interface AssistantMessage {
   id: string
@@ -14,61 +23,46 @@ interface AssistantMessage {
   books?: Book[]
 }
 
-function recommendByGenre(): Book[] {
-  const user = getUser(currentUserId)
-  if (!user) return books.slice(0, 3)
-  return books.filter((book) => user.favoriteGenres.includes(book.genre)).slice(0, 3)
-}
+type Answer = Pick<AssistantMessage, 'text' | 'books'>
 
-function recommendByDiary(): Book[] {
-  const readGenres = new Set(
-    diary
-      .map((entry) => books.find((book) => book.id === entry.bookId)?.genre)
-      .filter((genre): genre is string => Boolean(genre)),
-  )
-  return books
-    .filter((book) => readGenres.has(book.genre) && !diary.some((entry) => entry.bookId === book.id))
-    .slice(0, 3)
-}
+const REPLY_DELAY_MS = 800
 
-const initialMessage: AssistantMessage = {
+const greeting: AssistantMessage = {
   id: 'start',
   fromAssistant: true,
   text: 'Привет! Я помогу подобрать книгу. Выберите вариант ниже или опишите, что хотите почитать.',
 }
 
+const quickPrompts: { label: string; answer: (context: RecommendationContext) => Answer }[] = [
+  {
+    label: 'По любимым жанрам',
+    answer: (context) => ({ text: 'Вот книги в ваших любимых жанрах:', books: recommendByGenres(context) }),
+  },
+  {
+    label: 'На основе дневника',
+    answer: (context) => ({ text: 'На основе вашего дневника советую попробовать:', books: recommendByDiary(context) }),
+  },
+]
+
+function answerQuery(context: RecommendationContext, query: string): Answer {
+  const books = recommendByQuery(context, query)
+  if (books.length > 0) return { text: 'Вот что подходит под ваш запрос:', books }
+  return { text: 'По запросу ничего не нашлось. Возможно, понравится что-то из любимых жанров:', books: recommendByGenres(context) }
+}
+
 export default function AIAssistantPage() {
-  const [messages, setMessages] = useState<AssistantMessage[]>([initialMessage])
-  const [text, setText] = useState('')
+  const { state, reload } = useAsync(loadRecommendationContext)
+  const [messages, setMessages] = useState<AssistantMessage[]>([greeting])
+  const [typing, setTyping] = useState(false)
 
-  const addAssistantReply = (replyText: string, recommendedBooks: Book[]) => {
-    const reply: AssistantMessage = {
-      id: `a-${messages.length}`,
-      fromAssistant: true,
-      text: replyText,
-      books: recommendedBooks,
-    }
-    setMessages((prev) => [...prev, reply])
-  }
-
-  const handleQuickPrompt = (kind: 'genre' | 'diary') => {
-    if (kind === 'genre') {
-      addAssistantReply('Вот книги в ваших любимых жанрах:', recommendByGenre())
-    } else {
-      addAssistantReply('На основе вашего дневника советую попробовать:', recommendByDiary())
-    }
-  }
-
-  const handleSend = () => {
-    if (text.trim() === '') return
-    const userMessage: AssistantMessage = {
-      id: `u-${messages.length}`,
-      fromAssistant: false,
-      text: text.trim(),
-    }
-    setMessages((prev) => [...prev, userMessage])
-    setText('')
-    addAssistantReply('Хороший запрос! Пока я подбираю ответы по демо-правилам, вот что нашлось:', recommendByGenre())
+  // Сообщение пользователя появляется сразу, ответ ассистента — после «раздумий»
+  const ask = (question: string, answer: () => Answer) => {
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), fromAssistant: false, text: question }])
+    setTyping(true)
+    setTimeout(() => {
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), fromAssistant: true, ...answer() }])
+      setTyping(false)
+    }, REPLY_DELAY_MS)
   }
 
   return (
@@ -78,65 +72,65 @@ export default function AIAssistantPage() {
         <Typography variant="h4">ИИ-ассистент</Typography>
       </Stack>
 
-      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-        <Button variant="outlined" onClick={() => handleQuickPrompt('genre')}>
-          По любимым жанрам
-        </Button>
-        <Button variant="outlined" onClick={() => handleQuickPrompt('diary')}>
-          На основе дневника
-        </Button>
-      </Stack>
+      <AsyncView state={state} onRetry={reload}>
+        {(context) => (
+          <Stack spacing={2}>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+              {quickPrompts.map((prompt) => (
+                <Chip
+                  key={prompt.label}
+                  label={prompt.label}
+                  color="primary"
+                  variant="outlined"
+                  disabled={typing}
+                  onClick={() => ask(prompt.label, () => prompt.answer(context))}
+                />
+              ))}
+            </Stack>
 
-      <Stack spacing={2}>
-        {messages.map((message) => (
-          <Paper
-            key={message.id}
-            sx={{
-              p: 2,
-              alignSelf: message.fromAssistant ? 'flex-start' : 'flex-end',
-              bgcolor: message.fromAssistant ? 'grey.100' : 'primary.main',
-              color: message.fromAssistant ? 'text.primary' : 'primary.contrastText',
-              maxWidth: '90%',
-            }}
-          >
-            <Typography>{message.text}</Typography>
-            {message.books && message.books.length > 0 && (
-              <Box sx={{ mt: 2 }}>
-                <BookGrid>
-                  {message.books.map((book) => (
-                    <BookCard key={book.id} book={book} />
-                  ))}
-                </BookGrid>
-              </Box>
-            )}
-            {message.books && message.books.length === 0 && (
-              <Typography variant="body2" sx={{ mt: 1, opacity: 0.8 }}>
-                Подходящих книг не нашлось, загляните в{' '}
-                <Box component={Link} to="/library" sx={{ color: 'inherit' }}>
-                  библиотеку
-                </Box>
-                .
-              </Typography>
-            )}
-          </Paper>
-        ))}
-      </Stack>
+            <Box>
+              <AnimatedList
+                items={messages}
+                getKey={(message) => message.id}
+                renderItem={(message) => (
+                  <MessageBubble outgoing={!message.fromAssistant}>
+                    <Typography>{message.text}</Typography>
+                    {message.books && message.books.length > 0 && (
+                      <Box sx={{ mt: 2, minWidth: { sm: 400 } }}>
+                        <BookGrid>
+                          {message.books.map((book) => (
+                            <BookCard key={book.id} book={book} />
+                          ))}
+                        </BookGrid>
+                      </Box>
+                    )}
+                    {message.books?.length === 0 && (
+                      <Typography variant="body2" sx={{ mt: 1, opacity: 0.8 }}>
+                        Подходящих книг не нашлось, загляните в{' '}
+                        <Box component={Link} to={routes.market} sx={{ color: 'inherit' }}>
+                          библиотеку
+                        </Box>
+                        .
+                      </Typography>
+                    )}
+                  </MessageBubble>
+                )}
+              />
+              <Fade in={typing} unmountOnExit>
+                <Typography variant="body2" color="text.secondary">
+                  Ассистент печатает…
+                </Typography>
+              </Fade>
+            </Box>
 
-      <Stack direction="row" spacing={1}>
-        <TextField
-          label="Опишите, что хотите почитать"
-          size="small"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') handleSend()
-          }}
-          sx={{ flexGrow: 1 }}
-        />
-        <Button variant="contained" onClick={handleSend}>
-          Отправить
-        </Button>
-      </Stack>
+            <MessageInput
+              label="Опишите, что хотите почитать"
+              disabled={typing}
+              onSend={(text) => ask(text, () => answerQuery(context, text))}
+            />
+          </Stack>
+        )}
+      </AsyncView>
     </Stack>
   )
 }
