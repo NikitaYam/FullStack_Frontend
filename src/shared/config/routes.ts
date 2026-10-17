@@ -1,0 +1,17 @@
+export const routes = {
+    hello: '/',
+    home: '/home',
+    library: '/library',
+    diary: '/diary',
+    market: '/market',
+    social: '/social',
+    chats: '/chats',
+    assistant: '/assistant',
+    settings: '/settings',
+    book: (bookId: string) => `/books/${bookId}`,
+    bookReader: (bookId: string) => `/books/${bookId}/read`,
+    bookDiary: (bookId: string) => `/books/${bookId}/diary`,
+    post: (postId: string) => `/social/${postId}`,
+    profile: (userId: string) => `/profile/${userId}`,
+    chat: (userId: string) => `/chats/${userId}`,
+}

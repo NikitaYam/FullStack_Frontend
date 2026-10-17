@@ -1,100 +1,84 @@
-import { useState } from 'react'
+import { useCallback } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Avatar, Box, Button, Chip, Paper, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Chip, Paper, Stack, Typography } from '@mui/material'
+import { CommentItem, postApi } from '@/entities/post'
+import { UserAvatar, UserLink } from '@/entities/user'
+import { CommentForm } from '@/features/comment-create'
+import { LikeButton } from '@/features/post-like'
+import { isNotFoundError } from '@/shared/api'
+import { routes } from '@/shared/config/routes'
+import { useAsync } from '@/shared/lib'
+import { AnimatedList, AsyncView, EmptyState } from '@/shared/ui'
 import NotFoundPage from './NotFoundPage'
-import { currentUserId, getBook, getPost, getUser } from '../data/mock'
-import type { PostComment } from '../types'
 
 export default function PostPage() {
-  const { postId } = useParams()
-  const post = getPost(postId ?? '')
-
-  const [comments, setComments] = useState<PostComment[]>(post?.comments ?? [])
-  const [text, setText] = useState('')
-
-  if (!post) return <NotFoundPage />
-
-  const author = getUser(post.authorId)
-  const book = post.bookId ? getBook(post.bookId) : undefined
-
-  const handleAddComment = () => {
-    if (text.trim() === '') return
-    const newComment: PostComment = {
-      id: `my-${comments.length}`,
-      authorId: currentUserId,
-      text: text.trim(),
-    }
-    setComments([...comments, newComment])
-    setText('')
-  }
+  const { postId = '' } = useParams()
+  const loadPost = useCallback(() => postApi.getById(postId), [postId])
+  const { state, reload, setData } = useAsync(loadPost)
 
   return (
-    <Stack spacing={3} sx={{ maxWidth: 640 }}>
-      <Paper sx={{ p: 2 }}>
-        <Stack direction="row" spacing={2}>
-          <Avatar>{author?.name.charAt(0)}</Avatar>
-          <Box>
-            <Typography
-              component={Link}
-              to={`/profile/${post.authorId}`}
-              sx={{ color: 'inherit', fontWeight: 600, textDecoration: 'none' }}
-            >
-              {author?.name}
-            </Typography>
-            <Typography sx={{ mt: 1 }}>{post.text}</Typography>
-            {book && (
-              <Chip
-                component={Link}
-                to={`/books/${book.id}`}
-                clickable
-                label={`Книга: ${book.title}`}
-                size="small"
-                sx={{ mt: 1 }}
-              />
-            )}
-          </Box>
-        </Stack>
-      </Paper>
-
-      <Box>
-        <Typography variant="h6" gutterBottom>
-          Комментарии
-        </Typography>
-        <Stack spacing={2}>
-          {comments.length === 0 && (
-            <Typography color="text.secondary">Комментариев пока нет.</Typography>
-          )}
-          {comments.map((comment) => {
-            const commentAuthor = getUser(comment.authorId)
-            return (
-              <Stack key={comment.id} direction="row" spacing={2}>
-                <Avatar sx={{ width: 32, height: 32 }}>{commentAuthor?.name.charAt(0)}</Avatar>
-                <Box>
-                  <Typography sx={{ fontWeight: 600 }}>{commentAuthor?.name}</Typography>
-                  <Typography>{comment.text}</Typography>
+    <AsyncView
+      state={state}
+      onRetry={reload}
+      renderError={(error) => (isNotFoundError(error) ? <NotFoundPage /> : undefined)}
+    >
+      {(post) => (
+        <Stack spacing={3} sx={{ maxWidth: 640 }}>
+          <Paper sx={{ p: 2 }}>
+            <Stack direction="row" spacing={2}>
+              <UserAvatar user={post.author} />
+              <Box sx={{ flexGrow: 1 }}>
+                <UserLink user={post.author} />
+                <Typography sx={{ mt: 1, whiteSpace: 'pre-line' }}>{post.text}</Typography>
+                {post.book && (
+                  <Chip
+                    component={Link}
+                    to={routes.book(post.book.id)}
+                    clickable
+                    label={`Книга: ${post.book.title}`}
+                    size="small"
+                    sx={{ mt: 1 }}
+                  />
+                )}
+                <Box sx={{ mt: 1 }}>
+                  <LikeButton
+                    postId={post.id}
+                    likes={post.likes}
+                    likedByMe={post.likedByMe}
+                    onChange={(like) => setData((prev) => ({ ...prev, ...like }))}
+                  />
                 </Box>
-              </Stack>
-            )
-          })}
-        </Stack>
+              </Box>
+            </Stack>
+          </Paper>
 
-        <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
-          <TextField
-            label="Написать комментарий"
-            size="small"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            sx={{ flexGrow: 1 }}
-          />
-          <Button variant="contained" onClick={handleAddComment}>
-            Отправить
+          <Box>
+            <Typography variant="h6" gutterBottom>
+              Комментарии
+            </Typography>
+            {post.comments.length === 0 && <EmptyState title="Комментариев пока нет" />}
+            <AnimatedList
+              items={post.comments}
+              getKey={(comment) => comment.id}
+              renderItem={(comment) => <CommentItem comment={comment} />}
+            />
+            <CommentForm
+              postId={post.id}
+              onCreated={(comment) =>
+                setData((prev) => ({
+                  ...prev,
+                  comments: [...prev.comments, comment],
+                  commentsCount: prev.commentsCount + 1,
+                }))
+              }
+            />
+          </Box>
+
+          <Button component={Link} to={routes.social} sx={{ alignSelf: 'flex-start' }}>
+            Назад в ленту
           </Button>
         </Stack>
-      </Box>
-
-      <Button component={Link} to="/social" sx={{ alignSelf: 'flex-start' }}>
-        Назад в ленту
-      </Button>
-    </Stack>
+      )}
+    </AsyncView>
   )
 }

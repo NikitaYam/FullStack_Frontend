@@ -1,64 +1,65 @@
-import { useState } from "react";
-import {Button, MenuItem, Stack, TextField, Typography} from '@mui/material'
-import {Link} from 'react-router-dom'
-import BookCard from '../components/BookCard'
-import BookGrid from '../components/BookGrid'
-import {books} from '../data/mock'
-
-const genres = Array.from(new Set(books.map((book) => book.genre)))
+import { useState } from 'react'
+import { Button, Stack, Typography } from '@mui/material'
+import { Link } from 'react-router-dom'
+import { BookCard, BookGrid, BookGridSkeleton, bookApi } from '@/entities/book'
+import { BookFilters, defaultBookFilter, filterBooks, getGenres, isFilterActive } from '@/features/book-filter'
+import { routes } from '@/shared/config/routes'
+import { pluralize, useAsync } from '@/shared/lib'
+import { AsyncView, EmptyState } from '@/shared/ui'
 
 export default function LibraryPage() {
-    const [query, setQuery] = useState('')
-    const [genre, setGenre] = useState('all')
+  const { state, reload } = useAsync(bookApi.getAll)
+  const [filter, setFilter] = useState(defaultBookFilter)
 
-    const filteredBooks = books.filter((book) => {
-        const text = `${book.title} ${book.author}`.toLowerCase()
-        const matchesQuery = text.includes(query.toLowerCase())
-        const matchesGenre = genre === 'all' || book.genre === genre
-        return matchesQuery && matchesGenre
-    })
-
-    return (
+  return (
     <Stack spacing={3}>
       <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="h4">Книжная полка</Typography>
-        <Button component={Link} to="/assistant">
+        <Button component={Link} to={routes.assistant}>
           Что почитать?
         </Button>
       </Stack>
 
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-        <TextField
-          label="Поиск по названию или автору"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          sx={{ flexGrow: 1 }}
-        />
-        <TextField
-          select
-          label="Жанр"
-          value={genre}
-          onChange={(event) => setGenre(event.target.value)}
-          sx={{ minWidth: 200 }}
-        >
-          <MenuItem value="all">Все жанры</MenuItem>
-          {genres.map((item) => (
-            <MenuItem key={item} value={item}>
-              {item}
-            </MenuItem>
-          ))}
-        </TextField>
-      </Stack>
+      <AsyncView
+        state={state}
+        onRetry={reload}
+        loading={<BookGridSkeleton count={8} />}
+        isEmpty={(books) => books.length === 0}
+        empty={<EmptyState title="Полка пуста" description="Книги появятся здесь после добавления в каталог." />}
+      >
+        {(books) => {
+          const filtered = filterBooks(books, filter)
+          return (
+            <Stack spacing={3}>
+              <BookFilters value={filter} onChange={setFilter} genres={getGenres(books)} />
 
-      {filteredBooks.length === 0 ? (
-        <Typography color="text.secondary">Ничего не найдено. Попробуйте изменить запрос.</Typography>
-      ) : (
-        <BookGrid>
-          {filteredBooks.map((book) => (
-            <BookCard key={book.id} book={book} />
-          ))}
-        </BookGrid>
-      )}
+              {isFilterActive(filter) && (
+                <Typography variant="body2" color="text.secondary">
+                  Найдено {filtered.length} {pluralize(filtered.length, ['книга', 'книги', 'книг'])}
+                </Typography>
+              )}
+
+              {filtered.length === 0 ? (
+                <EmptyState
+                  title="Ничего не найдено"
+                  description="Попробуйте изменить запрос или выбрать другой жанр."
+                  action={
+                    <Button variant="outlined" onClick={() => setFilter(defaultBookFilter)}>
+                      Сбросить фильтры
+                    </Button>
+                  }
+                />
+              ) : (
+                <BookGrid>
+                  {filtered.map((book) => (
+                    <BookCard key={book.id} book={book} />
+                  ))}
+                </BookGrid>
+              )}
+            </Stack>
+          )
+        }}
+      </AsyncView>
     </Stack>
   )
 }

@@ -1,85 +1,62 @@
-import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { Avatar, Box, Button, Paper, Stack, TextField, Typography } from '@mui/material'
+import { useCallback } from 'react'
+import { useParams } from 'react-router-dom'
+import { Box, Paper, Stack, Typography } from '@mui/material'
+import { chatApi, MessageBubble } from '@/entities/chat'
+import { UserAvatar, UserLink, userApi } from '@/entities/user'
+import { SendMessageForm } from '@/features/send-message'
+import { isNotFoundError } from '@/shared/api'
+import { useAsync } from '@/shared/lib'
+import { AnimatedList, AsyncView, EmptyState } from '@/shared/ui'
 import NotFoundPage from './NotFoundPage'
-import { getChat, getUser } from '../data/mock'
-import type { Message } from '../types'
 
 export default function ChatPage() {
-  const { userId } = useParams()
-  const user = getUser(userId ?? '')
-  const existingChat = getChat(userId ?? '')
+  const { userId = '' } = useParams()
 
-  const [messages, setMessages] = useState<Message[]>(existingChat?.messages ?? [])
-  const [text, setText] = useState('')
-
-  if (!user) return <NotFoundPage />
-
-  const handleSend = () => {
-    if (text.trim() === '') return
-    const newMessage: Message = {
-      id: `my-${messages.length}`,
-      fromMe: true,
-      text: text.trim(),
-    }
-    setMessages([...messages, newMessage])
-    setText('')
-  }
+  const loadChat = useCallback(async () => {
+    const [companion, messages] = await Promise.all([userApi.getById(userId), chatApi.getMessages(userId)])
+    return { companion, messages }
+  }, [userId])
+  const { state, reload, setData } = useAsync(loadChat)
 
   return (
-    <Stack spacing={2} sx={{ maxWidth: 560, height: '75vh' }}>
-      <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
-        <Avatar>{user.name.charAt(0)}</Avatar>
-        <Typography
-          component={Link}
-          to={`/profile/${user.id}`}
-          variant="h6"
-          sx={{ color: 'inherit', textDecoration: 'none' }}
-        >
-          {user.name}
-        </Typography>
-      </Stack>
+    <AsyncView
+      state={state}
+      onRetry={reload}
+      renderError={(error) => (isNotFoundError(error) ? <NotFoundPage /> : undefined)}
+    >
+      {({ companion, messages }) => (
+        <Stack spacing={2} sx={{ maxWidth: 560, height: '75vh' }}>
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+            <UserAvatar user={companion} />
+            <UserLink user={companion} variant="h6" />
+          </Stack>
 
-      <Paper
-        variant="outlined"
-        sx={{ flexGrow: 1, p: 2, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}
-      >
-        {messages.length === 0 && (
-          <Typography color="text.secondary">Сообщений пока нет. Напишите первым!</Typography>
-        )}
-        {messages.map((message) => (
-          <Box
-            key={message.id}
-            sx={{
-              alignSelf: message.fromMe ? 'flex-end' : 'flex-start',
-              bgcolor: message.fromMe ? 'primary.main' : 'grey.200',
-              color: message.fromMe ? 'primary.contrastText' : 'text.primary',
-              borderRadius: 2,
-              px: 2,
-              py: 1,
-              maxWidth: '75%',
-            }}
+          {/* column-reverse держит прокрутку внизу: новые сообщения всегда видны */}
+          <Paper
+            variant="outlined"
+            sx={{ flexGrow: 1, p: 2, overflowY: 'auto', display: 'flex', flexDirection: 'column-reverse' }}
           >
-            <Typography variant="body2">{message.text}</Typography>
-          </Box>
-        ))}
-      </Paper>
+            <Box>
+              {messages.length === 0 && <EmptyState title="Сообщений пока нет" description="Напишите первым!" />}
+              <AnimatedList
+                items={messages}
+                getKey={(message) => message.id}
+                spacing={1}
+                renderItem={(message) => (
+                  <MessageBubble outgoing={message.fromMe}>
+                    <Typography variant="body2">{message.text}</Typography>
+                  </MessageBubble>
+                )}
+              />
+            </Box>
+          </Paper>
 
-      <Stack direction="row" spacing={1}>
-        <TextField
-          label="Сообщение"
-          size="small"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') handleSend()
-          }}
-          sx={{ flexGrow: 1 }}
-        />
-        <Button variant="contained" onClick={handleSend}>
-          Отправить
-        </Button>
-      </Stack>
-    </Stack>
+          <SendMessageForm
+            companionId={companion.id}
+            onSent={(message) => setData((prev) => ({ ...prev, messages: [...prev.messages, message] }))}
+          />
+        </Stack>
+      )}
+    </AsyncView>
   )
 }
